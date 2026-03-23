@@ -1,0 +1,782 @@
+-[[
+     ______  _                _                  ______   _   _        _
+    (_____ \(_)              | |                (_____ \ | | | |      | |
+     _____) )_  ____ _   _  | |___ ____  ___   _____) )| |_| |_   _ | |__
+    (_____ (| |/ ___) | | | |  _  |  _ \/ _ \ |  ____/ |  _  | | | ||  _ \
+          | | | |   | |_| | | | | | | | |_| | | |      | | | | |_| || |_) )
+          |_|_|_|    \__  |  \___/|_| |_\___/  |_|      \_| |_/\____||____/
+                    (____/
+
+    Riquelme Z Hub — Key System
+    Version : 1.0.0
+    Firebase : https://filmes-strimz-default-rtdb.firebaseio.com/
+    Theme    : Amarelo / Laranja
+]]
+
+-- ════════════════════════════════════════════════════════════════════
+--                          CONFIGURAÇÃO
+-- ════════════════════════════════════════════════════════════════════
+
+local CONFIG = {
+    Name        = "Riquelme Z Hub",
+    Version     = "1.0.0",
+    Background  = "rbxassetid://70479137741271",
+    Logo        = "rbxassetid://85041395410680",
+
+    FirebaseURL = "https://filmes-strimz-default-rtdb.firebaseio.com/keys/",
+    GetKeyLink  = "https://riquelmescripts.netlify.app/#key",
+    MainScript  = "https://raw.githubusercontent.com/riquelmestudios/Riquelme.Hub.Oficial/refs/heads/main/Riquelme%20z%20Hub",
+
+    -- Duração padrão de keys novas (em segundos) = 10 horas
+    KeyDuration = 10 * 60 * 60,
+
+    -- Paleta AMARELO / LARANJA
+    T = {
+        Primary     = Color3.fromRGB(255, 180,  0),
+        PrimaryDark = Color3.fromRGB(180, 100,  0),
+        PrimaryGlow = Color3.fromRGB(255, 220, 80),
+        Accent      = Color3.fromRGB(255, 110,  0),
+        BG          = Color3.fromRGB(8,    6,   2),
+        BGFrame     = Color3.fromRGB(16,  12,   3),
+        BGInput     = Color3.fromRGB(22,  16,   4),
+        Text        = Color3.fromRGB(255, 240, 200),
+        TextSub     = Color3.fromRGB(200, 160,  80),
+        TextDim     = Color3.fromRGB(110,  80,  30),
+        Success     = Color3.fromRGB(60,  215,  90),
+        Error       = Color3.fromRGB(255,  60,  60),
+        Warning     = Color3.fromRGB(255, 200,  40),
+        Badge       = Color3.fromRGB(255, 145,  10),
+    }
+}
+
+-- ════════════════════════════════════════════════════════════════════
+--                          SERVIÇOS
+-- ════════════════════════════════════════════════════════════════════
+
+local Players      = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local RunService   = game:GetService("RunService")
+local HttpService  = game:GetService("HttpService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui   = LocalPlayer:WaitForChild("PlayerGui")
+local T           = CONFIG.T
+
+-- ════════════════════════════════════════════════════════════════════
+--                         UTILITÁRIOS
+-- ════════════════════════════════════════════════════════════════════
+
+local function Tween(obj, props, t, style, dir)
+    TweenService:Create(obj, TweenInfo.new(
+        t     or 0.3,
+        style or Enum.EasingStyle.Quart,
+        dir   or Enum.EasingDirection.Out
+    ), props):Play()
+end
+
+--[[
+    Verifica a key no Firebase.
+    Retorna: "valid" + tempoStr  |  "expired"  |  "invalid"  |  "error"  |  "empty"
+    
+    Estrutura esperada no Firebase:
+    {
+        "SUA-KEY": {
+            "expireAt": 1700000000   <- Unix timestamp em SEGUNDOS (os.time())
+        }
+    }
+]]
+local function CheckKeyFirebase(keyInput)
+    keyInput = keyInput:match("^%s*(.-)%s*$")
+    if keyInput == "" then return "empty", "0" end
+
+    local url = CONFIG.FirebaseURL .. keyInput .. ".json"
+
+    local ok, response = pcall(function()
+        return game:HttpGet(url, true)
+    end)
+
+    if not ok or not response then return "error", "0" end
+    if response == "null" or response == "" then return "invalid", "0" end
+
+    local parseOk, dados = pcall(function()
+        return HttpService:JSONDecode(response)
+    end)
+
+    if not parseOk or type(dados) ~= "table" then return "invalid", "0" end
+    if not dados.expireAt then return "invalid", "0" end
+
+    local agora    = os.time()
+    local expireAt = tonumber(dados.expireAt)
+
+    if not expireAt or agora > expireAt then return "expired", "0" end
+
+    -- Calcula tempo restante legível
+    local restante = expireAt - agora
+    local horas    = math.floor(restante / 3600)
+    local minutos  = math.floor((restante % 3600) / 60)
+    local tempoStr
+
+    if horas >= 24 then
+        local dias = math.floor(horas / 24)
+        tempoStr = dias .. "d " .. (horas % 24) .. "h"
+    elseif horas > 0 then
+        tempoStr = horas .. "h " .. minutos .. "min"
+    else
+        tempoStr = minutos .. " minutos"
+    end
+
+    return "valid", tempoStr
+end
+
+-- ════════════════════════════════════════════════════════════════════
+--                        SETUP DA GUI
+-- ════════════════════════════════════════════════════════════════════
+
+if PlayerGui:FindFirstChild("RiquelmeZHubKeyGUI") then
+    PlayerGui.RiquelmeZHubKeyGUI:Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name           = "RiquelmeZHubKeyGUI"
+ScreenGui.ResetOnSpawn   = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent         = PlayerGui
+
+-- Background
+local BG = Instance.new("ImageLabel")
+BG.Size              = UDim2.new(1, 0, 1, 0)
+BG.BackgroundColor3  = T.BG
+BG.Image             = CONFIG.Background
+BG.ScaleType         = Enum.ScaleType.Crop
+BG.ImageTransparency = 1
+BG.ZIndex            = 0
+BG.Parent            = ScreenGui
+
+-- Película escura
+local Film = Instance.new("Frame")
+Film.Size                   = UDim2.new(1, 0, 1, 0)
+Film.BackgroundColor3       = Color3.new(0, 0, 0)
+Film.BackgroundTransparency = 1
+Film.ZIndex                 = 1
+Film.Parent                 = ScreenGui
+
+-- ─── JANELA PRINCIPAL ────────────────────────────────────────────────
+local W, H = 490, 352
+
+local Main = Instance.new("Frame")
+Main.Name             = "Main"
+Main.Size             = UDim2.new(0, 0, 0, 0)
+Main.Position         = UDim2.new(0.5, 0, 0.5, 0)
+Main.BackgroundColor3 = T.BGFrame
+Main.BorderSizePixel  = 0
+Main.ZIndex           = 2
+Main.Parent           = ScreenGui
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 14)
+
+-- Gradiente de fundo da janela
+local MainGrad = Instance.new("UIGradient", Main)
+MainGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,   Color3.fromRGB(28, 20,  4)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(18, 13,  3)),
+    ColorSequenceKeypoint.new(1,   Color3.fromRGB(10,  7,  1)),
+})
+MainGrad.Rotation = 140
+
+-- Borda amarela pulsante
+local MainStroke = Instance.new("UIStroke", Main)
+MainStroke.Color     = T.Primary
+MainStroke.Thickness = 1.8
+
+-- ─── BARRA DE TÍTULO ─────────────────────────────────────────────────
+local TBar = Instance.new("Frame", Main)
+TBar.Size                   = UDim2.new(1, 0, 0, 56)
+TBar.BackgroundTransparency = 1
+TBar.ZIndex                 = 3
+
+-- Logo / ícone
+local LogoBG = Instance.new("ImageLabel", TBar)
+LogoBG.Size              = UDim2.new(0, 38, 0, 38)
+LogoBG.Position          = UDim2.new(0, 14, 0, 9)
+LogoBG.BackgroundColor3  = T.PrimaryDark
+LogoBG.Image             = CONFIG.Logo
+LogoBG.ScaleType         = Enum.ScaleType.Fit
+LogoBG.ZIndex            = 5
+Instance.new("UICorner", LogoBG).CornerRadius = UDim.new(0, 8)
+local LogoStroke = Instance.new("UIStroke", LogoBG)
+LogoStroke.Color = T.Primary; LogoStroke.Thickness = 1.5
+
+local TitleLbl = Instance.new("TextLabel", TBar)
+TitleLbl.Size                   = UDim2.new(0, 300, 0, 24)
+TitleLbl.Position               = UDim2.new(0, 62, 0, 7)
+TitleLbl.BackgroundTransparency = 1
+TitleLbl.Text                   = "RIQUELME Z HUB"
+TitleLbl.Font                   = Enum.Font.GothamBold
+TitleLbl.TextColor3             = T.Primary
+TitleLbl.TextSize               = 17
+TitleLbl.TextXAlignment         = Enum.TextXAlignment.Left
+TitleLbl.ZIndex                 = 5
+
+local SubLbl = Instance.new("TextLabel", TBar)
+SubLbl.Size                   = UDim2.new(0, 300, 0, 16)
+SubLbl.Position               = UDim2.new(0, 62, 0, 31)
+SubLbl.BackgroundTransparency = 1
+SubLbl.Text                   = "Key System " .. CONFIG.Version .. "  •  Keys de 10 horas"
+SubLbl.Font                   = Enum.Font.Gotham
+SubLbl.TextColor3             = T.TextSub
+SubLbl.TextSize               = 10
+SubLbl.TextXAlignment         = Enum.TextXAlignment.Left
+SubLbl.ZIndex                 = 5
+
+-- Badge versão (canto direito)
+local VerBadge = Instance.new("Frame", TBar)
+VerBadge.Size             = UDim2.new(0, 72, 0, 22)
+VerBadge.Position         = UDim2.new(1, -86, 0, 17)
+VerBadge.BackgroundColor3 = T.Accent
+VerBadge.BackgroundTransparency = 0.12
+VerBadge.BorderSizePixel  = 0
+VerBadge.ZIndex           = 5
+Instance.new("UICorner", VerBadge).CornerRadius = UDim.new(0, 6)
+local VBL = Instance.new("TextLabel", VerBadge)
+VBL.Size = UDim2.new(1, 0, 1, 0); VBL.BackgroundTransparency = 1
+VBL.Text = "v" .. CONFIG.Version; VBL.Font = Enum.Font.GothamBold
+VBL.TextColor3 = Color3.new(1, 1, 1); VBL.TextSize = 10; VBL.ZIndex = 6
+
+-- Separador título
+local TitleSep = Instance.new("Frame", TBar)
+TitleSep.Size                   = UDim2.new(0.9, 0, 0, 1)
+TitleSep.Position               = UDim2.new(0.05, 0, 1, -1)
+TitleSep.BackgroundColor3       = T.Primary
+TitleSep.BackgroundTransparency = 0.55
+TitleSep.BorderSizePixel        = 0
+
+-- ─── BOAS-VINDAS ────────────────────────────────────────────────────
+local WelBG = Instance.new("Frame", Main)
+WelBG.Size                   = UDim2.new(1, -28, 0, 70)
+WelBG.Position               = UDim2.new(0, 14, 0, 64)
+WelBG.BackgroundColor3       = T.Primary
+WelBG.BackgroundTransparency = 0.88
+WelBG.BorderSizePixel        = 0
+WelBG.ZIndex                 = 3
+Instance.new("UICorner", WelBG).CornerRadius = UDim.new(0, 10)
+local WelStroke = Instance.new("UIStroke", WelBG)
+WelStroke.Color = T.Primary; WelStroke.Thickness = 1; WelStroke.Transparency = 0.5
+
+local Avatar = Instance.new("ImageLabel", WelBG)
+Avatar.Size             = UDim2.new(0, 52, 0, 52)
+Avatar.Position         = UDim2.new(0, 10, 0.5, -26)
+Avatar.BackgroundColor3 = T.PrimaryDark
+Avatar.Image            = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. LocalPlayer.UserId .. "&width=150&height=150&format=png"
+Avatar.ZIndex           = 5
+Instance.new("UICorner", Avatar).CornerRadius = UDim.new(1, 0)
+local AvStroke = Instance.new("UIStroke", Avatar)
+AvStroke.Color = T.PrimaryGlow; AvStroke.Thickness = 2.2
+
+local WelTitle = Instance.new("TextLabel", WelBG)
+WelTitle.Size                   = UDim2.new(1, -76, 0, 26)
+WelTitle.Position               = UDim2.new(0, 72, 0, 10)
+WelTitle.BackgroundTransparency = 1
+WelTitle.Text                   = "⚡  Bem Vindo, " .. LocalPlayer.DisplayName .. "!"
+WelTitle.Font                   = Enum.Font.GothamBold
+WelTitle.TextColor3             = Color3.new(1, 1, 1)
+WelTitle.TextSize               = 14
+WelTitle.TextXAlignment         = Enum.TextXAlignment.Left
+WelTitle.ZIndex                 = 5
+
+local WelSub = Instance.new("TextLabel", WelBG)
+WelSub.Size                   = UDim2.new(1, -76, 0, 18)
+WelSub.Position               = UDim2.new(0, 72, 0, 37)
+WelSub.BackgroundTransparency = 1
+WelSub.Text                   = "@" .. LocalPlayer.Name .. "  •  Insira sua key para continuar"
+WelSub.Font                   = Enum.Font.Gotham
+WelSub.TextColor3             = T.TextSub
+WelSub.TextSize               = 10.5
+WelSub.TextXAlignment         = Enum.TextXAlignment.Left
+WelSub.ZIndex                 = 5
+
+-- ─── INPUT DA KEY ───────────────────────────────────────────────────
+local InputWrap = Instance.new("Frame", Main)
+InputWrap.Size              = UDim2.new(1, -28, 0, 46)
+InputWrap.Position          = UDim2.new(0, 14, 0, 144)
+InputWrap.BackgroundColor3  = T.BGInput
+InputWrap.BorderSizePixel   = 0
+InputWrap.ZIndex            = 3
+Instance.new("UICorner", InputWrap).CornerRadius = UDim.new(0, 10)
+
+local InputStroke = Instance.new("UIStroke", InputWrap)
+InputStroke.Color     = T.PrimaryDark
+InputStroke.Thickness = 1.5
+
+local LockIco = Instance.new("TextLabel", InputWrap)
+LockIco.Size                   = UDim2.new(0, 38, 1, 0)
+LockIco.BackgroundTransparency = 1
+LockIco.Text                   = "🔑"
+LockIco.TextSize               = 15
+LockIco.ZIndex                 = 5
+
+local KeyBox = Instance.new("TextBox", InputWrap)
+KeyBox.Size              = UDim2.new(1, -148, 1, 0)
+KeyBox.Position          = UDim2.new(0, 38, 0, 0)
+KeyBox.BackgroundTransparency = 1
+KeyBox.PlaceholderText   = "Insira sua key de 10 horas..."
+KeyBox.PlaceholderColor3 = T.TextDim
+KeyBox.Text              = ""
+KeyBox.Font              = Enum.Font.GothamSemibold
+KeyBox.TextColor3        = T.Text
+KeyBox.TextSize          = 12
+KeyBox.TextXAlignment    = Enum.TextXAlignment.Left
+KeyBox.ClearTextOnFocus  = false
+KeyBox.ZIndex            = 5
+
+-- Botão VERIFICAR
+local VerBtn = Instance.new("TextButton", InputWrap)
+VerBtn.Size             = UDim2.new(0, 122, 0, 34)
+VerBtn.Position         = UDim2.new(1, -126, 0.5, -17)
+VerBtn.BackgroundColor3 = T.Primary
+VerBtn.Text             = "Verificar Key"
+VerBtn.Font             = Enum.Font.GothamBold
+VerBtn.TextColor3       = Color3.fromRGB(15, 10, 0)
+VerBtn.TextSize         = 12
+VerBtn.BorderSizePixel  = 0
+VerBtn.ZIndex           = 6
+Instance.new("UICorner", VerBtn).CornerRadius = UDim.new(0, 8)
+local VGrad = Instance.new("UIGradient", VerBtn)
+VGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 210, 50)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 130,  0)),
+})
+VGrad.Rotation = 90
+
+-- ─── STATUS ─────────────────────────────────────────────────────────
+local StatusLbl = Instance.new("TextLabel", Main)
+StatusLbl.Size                   = UDim2.new(1, -28, 0, 22)
+StatusLbl.Position               = UDim2.new(0, 14, 0, 198)
+StatusLbl.BackgroundTransparency = 1
+StatusLbl.Text                   = "Verificação em tempo Real"
+StatusLbl.Font                   = Enum.Font.Gotham
+StatusLbl.TextColor3             = T.TextDim
+StatusLbl.TextSize               = 11
+StatusLbl.TextXAlignment         = Enum.TextXAlignment.Center
+StatusLbl.ZIndex                 = 4
+
+-- ─── SEPARADOR ──────────────────────────────────────────────────────
+local SepLine = Instance.new("Frame", Main)
+SepLine.Size                   = UDim2.new(0.9, 0, 0, 1)
+SepLine.Position               = UDim2.new(0.05, 0, 0, 232)
+SepLine.BackgroundColor3       = T.PrimaryDark
+SepLine.BackgroundTransparency = 0.3
+SepLine.BorderSizePixel        = 0
+
+local SepLbl = Instance.new("TextLabel", Main)
+SepLbl.Size                   = UDim2.new(0, 110, 0, 14)
+SepLbl.Position               = UDim2.new(0.5, -55, 0, 226)
+SepLbl.BackgroundColor3       = T.BGFrame
+SepLbl.BackgroundTransparency = 0
+SepLbl.Text                   = "  OBTER KEY  "
+SepLbl.Font                   = Enum.Font.GothamSemibold
+SepLbl.TextColor3             = T.TextSub
+SepLbl.TextSize               = 10
+SepLbl.ZIndex                 = 5
+
+-- ─── BOTÃO GET KEY ──────────────────────────────────────────────────
+local GetBtn = Instance.new("TextButton", Main)
+GetBtn.Size             = UDim2.new(1, -28, 0, 50)
+GetBtn.Position         = UDim2.new(0, 14, 0, 242)
+GetBtn.BackgroundColor3 = T.BGInput
+GetBtn.Text             = ""
+GetBtn.BorderSizePixel  = 0
+GetBtn.ZIndex           = 3
+Instance.new("UICorner", GetBtn).CornerRadius = UDim.new(0, 10)
+
+local GetStroke = Instance.new("UIStroke", GetBtn)
+GetStroke.Color = T.Primary; GetStroke.Thickness = 1.5; GetStroke.Transparency = 0.5
+
+local GetGrad = Instance.new("UIGradient", GetBtn)
+GetGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(38, 26,  5)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(22, 14,  2)),
+})
+GetGrad.Rotation = 90
+
+local GetIco = Instance.new("TextLabel", GetBtn)
+GetIco.Size = UDim2.new(0, 42, 1, 0); GetIco.Position = UDim2.new(0, 8, 0, 0)
+GetIco.BackgroundTransparency = 1; GetIco.Text = "🔗"; GetIco.TextSize = 18; GetIco.ZIndex = 5
+
+local GetMain = Instance.new("Frame", GetBtn)
+GetMain.Size = UDim2.new(1, -62, 1, 0); GetMain.Position = UDim2.new(0, 52, 0, 0)
+GetMain.BackgroundTransparency = 1; GetMain.ZIndex = 5
+
+local GetTxtTop = Instance.new("TextLabel", GetMain)
+GetTxtTop.Size = UDim2.new(1, 0, 0, 22); GetTxtTop.Position = UDim2.new(0, 0, 0, 7)
+GetTxtTop.BackgroundTransparency = 1; GetTxtTop.Text = "OBTER KEY GRÁTIS"
+GetTxtTop.Font = Enum.Font.GothamBold; GetTxtTop.TextColor3 = T.PrimaryGlow
+GetTxtTop.TextSize = 13; GetTxtTop.TextXAlignment = Enum.TextXAlignment.Left; GetTxtTop.ZIndex = 6
+
+local GetTxtBot = Instance.new("TextLabel", GetMain)
+GetTxtBot.Size = UDim2.new(1, 0, 0, 16); GetTxtBot.Position = UDim2.new(0, 0, 0, 28)
+GetTxtBot.BackgroundTransparency = 1; GetTxtBot.Text = "Clique para copiar o link • Key válida por 10h"
+GetTxtBot.Font = Enum.Font.Gotham; GetTxtBot.TextColor3 = T.TextSub
+GetTxtBot.TextSize = 10; GetTxtBot.TextXAlignment = Enum.TextXAlignment.Left; GetTxtBot.ZIndex = 6
+
+local GetArrow = Instance.new("TextLabel", GetBtn)
+GetArrow.Size = UDim2.new(0, 30, 1, 0); GetArrow.Position = UDim2.new(1, -36, 0, 0)
+GetArrow.BackgroundTransparency = 1; GetArrow.Text = "›"
+GetArrow.Font = Enum.Font.GothamBold; GetArrow.TextColor3 = T.Primary
+GetArrow.TextSize = 26; GetArrow.ZIndex = 5
+
+-- ─── RODAPÉ ─────────────────────────────────────────────────────────
+local Footer = Instance.new("TextLabel", Main)
+Footer.Size = UDim2.new(1, 0, 0, 18); Footer.Position = UDim2.new(0, 0, 1, -20)
+Footer.BackgroundTransparency = 1
+Footer.Text = "© Riquelme Scripts  •  " .. CONFIG.Name
+Footer.Font = Enum.Font.Gotham; Footer.TextColor3 = T.TextDim; Footer.TextSize = 9.5; Footer.ZIndex = 4
+
+-- ════════════════════════════════════════════════════════════════════
+--                   NOTIFICAÇÃO FLUTUANTE
+-- ════════════════════════════════════════════════════════════════════
+
+local function Notify(msg, color, dur)
+    if ScreenGui:FindFirstChild("_Notif") then ScreenGui._Notif:Destroy() end
+    local N = Instance.new("Frame", ScreenGui)
+    N.Name = "_Notif"
+    N.Size = UDim2.new(0, 390, 0, 54)
+    N.Position = UDim2.new(0.5, -195, 0, -68)
+    N.BackgroundColor3 = color
+    N.BackgroundTransparency = 0.08
+    N.BorderSizePixel = 0
+    N.ZIndex = 30
+    Instance.new("UICorner", N).CornerRadius = UDim.new(0, 10)
+    local NS = Instance.new("UIStroke", N); NS.Color = color; NS.Thickness = 1.5; NS.Transparency = 0.2
+
+    local NL = Instance.new("TextLabel", N)
+    NL.Size = UDim2.new(1, -16, 1, 0); NL.Position = UDim2.new(0, 8, 0, 0)
+    NL.BackgroundTransparency = 1; NL.Text = msg
+    NL.Font = Enum.Font.GothamBold; NL.TextColor3 = Color3.new(1, 1, 1)
+    NL.TextSize = 13; NL.ZIndex = 31; NL.TextWrapped = true
+
+    Tween(N, {Position = UDim2.new(0.5, -195, 0, 14)}, 0.42, Enum.EasingStyle.Back)
+    task.delay(dur or 3, function()
+        Tween(N, {Position = UDim2.new(0.5, -195, 0, -68)}, 0.38)
+        task.delay(0.42, function() if N and N.Parent then N:Destroy() end end)
+    end)
+end
+
+-- ════════════════════════════════════════════════════════════════════
+--              TELA DE SUCESSO + EXECUÇÃO DO SCRIPT
+-- ════════════════════════════════════════════════════════════════════
+
+local function LaunchMain(tempoRestante)
+    Tween(Main, {Size = UDim2.new(0, 0, 0, 0), Position = UDim2.new(0.5, 0, 0.5, 0)}, 0.4)
+
+    task.delay(0.45, function()
+        Main:Destroy()
+
+        local SF = Instance.new("Frame", ScreenGui)
+        SF.Size = UDim2.new(0, 0, 0, 0); SF.Position = UDim2.new(0.5, 0, 0.5, 0)
+        SF.BackgroundColor3 = Color3.fromRGB(12, 8, 1); SF.BorderSizePixel = 0; SF.ZIndex = 10
+        Instance.new("UICorner", SF).CornerRadius = UDim.new(0, 16)
+        local SFS = Instance.new("UIStroke", SF); SFS.Color = T.Primary; SFS.Thickness = 2
+
+        Tween(SF, {Size = UDim2.new(0, 420, 0, 264), Position = UDim2.new(0.5, -210, 0.5, -132)}, 0.55, Enum.EasingStyle.Back)
+
+        -- Ícone ⚡
+        local ChkBG = Instance.new("Frame", SF)
+        ChkBG.Size = UDim2.new(0, 66, 0, 66); ChkBG.Position = UDim2.new(0.5, -33, 0, 16)
+        ChkBG.BackgroundColor3 = T.Primary; ChkBG.BackgroundTransparency = 0.12
+        ChkBG.BorderSizePixel = 0; ChkBG.ZIndex = 12
+        Instance.new("UICorner", ChkBG).CornerRadius = UDim.new(1, 0)
+        local ChkL = Instance.new("TextLabel", ChkBG)
+        ChkL.Size = UDim2.new(1, 0, 1, 0); ChkL.BackgroundTransparency = 1
+        ChkL.Text = "⚡"; ChkL.Font = Enum.Font.GothamBold
+        ChkL.TextColor3 = Color3.fromRGB(15, 10, 0); ChkL.TextSize = 34; ChkL.ZIndex = 13
+
+        local SucT = Instance.new("TextLabel", SF)
+        SucT.Size = UDim2.new(1, -20, 0, 28); SucT.Position = UDim2.new(0, 10, 0, 96)
+        SucT.BackgroundTransparency = 1; SucT.Text = "⚡  Verificação Bem Sucedida!"
+        SucT.Font = Enum.Font.GothamBold; SucT.TextColor3 = T.Primary; SucT.TextSize = 18; SucT.ZIndex = 12
+
+        local SucN = Instance.new("TextLabel", SF)
+        SucN.Size = UDim2.new(1, -20, 0, 20); SucN.Position = UDim2.new(0, 10, 0, 128)
+        SucN.BackgroundTransparency = 1
+        SucN.Text = "Bem Vindo, " .. LocalPlayer.DisplayName .. "!"
+        SucN.Font = Enum.Font.GothamSemibold; SucN.TextColor3 = Color3.fromRGB(255, 230, 150)
+        SucN.TextSize = 13; SucN.ZIndex = 12
+
+        local SucTime = Instance.new("TextLabel", SF)
+        SucTime.Size = UDim2.new(1, -20, 0, 18); SucTime.Position = UDim2.new(0, 10, 0, 150)
+        SucTime.BackgroundTransparency = 1
+        SucTime.Text = "🕐  Key válida por: " .. tostring(tempoRestante)
+        SucTime.Font = Enum.Font.GothamSemibold; SucTime.TextColor3 = T.Badge
+        SucTime.TextSize = 12; SucTime.ZIndex = 12
+
+        local LoadT = Instance.new("TextLabel", SF)
+        LoadT.Size = UDim2.new(1, -20, 0, 18); LoadT.Position = UDim2.new(0, 10, 0, 174)
+        LoadT.BackgroundTransparency = 1; LoadT.Text = "Carregando Riquelme Z Hub..."
+        LoadT.Font = Enum.Font.Gotham; LoadT.TextColor3 = Color3.fromRGB(255, 210, 100); LoadT.TextSize = 12; LoadT.ZIndex = 12
+
+        -- Barra de carregamento
+        local LBG = Instance.new("Frame", SF)
+        LBG.Size = UDim2.new(0.84, 0, 0, 8); LBG.Position = UDim2.new(0.08, 0, 0, 204)
+        LBG.BackgroundColor3 = Color3.fromRGB(30, 20, 4); LBG.BorderSizePixel = 0; LBG.ZIndex = 12
+        Instance.new("UICorner", LBG).CornerRadius = UDim.new(1, 0)
+        local LFill = Instance.new("Frame", LBG)
+        LFill.Size = UDim2.new(0, 0, 1, 0); LFill.BackgroundColor3 = T.Primary
+        LFill.BorderSizePixel = 0; LFill.ZIndex = 13
+        Instance.new("UICorner", LFill).CornerRadius = UDim.new(1, 0)
+        -- Gradiente na barra
+        local LGrad = Instance.new("UIGradient", LFill)
+        LGrad.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0,   Color3.fromRGB(255, 220, 60)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 150,  0)),
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(220,  80,  0)),
+        })
+        Tween(LFill, {Size = UDim2.new(1, 0, 1, 0)}, 2.8, Enum.EasingStyle.Linear)
+
+        -- Animação de dots
+        local d = 0; local dc
+        dc = RunService.Heartbeat:Connect(function()
+            d = (d + 1) % 4
+            if LoadT and LoadT.Parent then
+                LoadT.Text = "Carregando Riquelme Z Hub" .. string.rep(".", d)
+            else
+                dc:Disconnect()
+            end
+        end)
+
+        task.delay(3.2, function()
+            if dc then dc:Disconnect() end
+            Tween(SF,   {Size = UDim2.new(0, 0, 0, 0), Position = UDim2.new(0.5, 0, 0.5, 0)}, 0.4)
+            Tween(Film, {BackgroundTransparency = 1}, 0.4)
+            Tween(BG,   {ImageTransparency = 1}, 0.4)
+
+            task.delay(0.52, function()
+                ScreenGui:Destroy()
+
+                -- ══════════════════════════════════════
+                --      EXECUTA O SCRIPT PRINCIPAL
+                -- ══════════════════════════════════════
+                local ok, content = pcall(function()
+                    return game:HttpGet(CONFIG.MainScript, true)
+                end)
+
+                if ok and type(content) == "string" and #content > 0 then
+                    local fn, err = loadstring(content)
+                    if fn then
+                        local ok2, runErr = pcall(fn)
+                        if not ok2 then
+                            warn("[RiquelmeZHub] Erro ao executar: " .. tostring(runErr))
+                        end
+                    else
+                        warn("[RiquelmeZHub] Erro ao compilar: " .. tostring(err))
+                    end
+                else
+                    warn("[RiquelmeZHub] Falha ao baixar script principal: " .. tostring(content))
+                end
+            end)
+        end)
+    end)
+end
+
+-- ════════════════════════════════════════════════════════════════════
+--                      LÓGICA DOS BOTÕES
+-- ════════════════════════════════════════════════════════════════════
+
+-- Hovers
+VerBtn.MouseEnter:Connect(function() Tween(VerBtn, {BackgroundColor3 = T.PrimaryGlow}, 0.2) end)
+VerBtn.MouseLeave:Connect(function() Tween(VerBtn, {BackgroundColor3 = T.Primary},    0.2) end)
+
+GetBtn.MouseEnter:Connect(function()
+    Tween(GetBtn,    {BackgroundColor3 = Color3.fromRGB(40, 26, 5)}, 0.2)
+    Tween(GetStroke, {Transparency = 0},      0.2)
+    Tween(GetArrow,  {TextColor3 = T.PrimaryGlow}, 0.2)
+end)
+GetBtn.MouseLeave:Connect(function()
+    Tween(GetBtn,    {BackgroundColor3 = T.BGInput}, 0.2)
+    Tween(GetStroke, {Transparency = 0.5},    0.2)
+    Tween(GetArrow,  {TextColor3 = T.Primary}, 0.2)
+end)
+
+-- Foco no input
+KeyBox.Focused:Connect(function()
+    Tween(InputStroke, {Color = T.Primary, Transparency = 0}, 0.2)
+end)
+KeyBox.FocusLost:Connect(function(enter)
+    Tween(InputStroke, {Color = T.PrimaryDark, Transparency = 0}, 0.2)
+    if enter then VerBtn.MouseButton1Click:Fire() end
+end)
+
+-- ─── VERIFICAR KEY ───────────────────────────────────────────────────
+local busy = false
+
+local function DoVerify()
+    if busy then return end
+    local raw = KeyBox.Text
+
+    if raw == "" then
+        StatusLbl.TextColor3 = T.Warning
+        StatusLbl.Text = "⚠  Campo vazio! Insira sua key de 10 horas."
+        Tween(InputStroke, {Color = T.Warning}, 0.15)
+        Notify("⚠  Insira sua key antes de verificar!", Color3.fromRGB(160, 110, 0), 2.5)
+        task.delay(1.2, function() Tween(InputStroke, {Color = T.PrimaryDark}, 0.4) end)
+        return
+    end
+
+    busy = true
+    Tween(VerBtn, {BackgroundColor3 = Color3.fromRGB(120, 80, 0)}, 0.2)
+    StatusLbl.TextColor3 = T.TextSub
+    StatusLbl.Text = "Consultando Banco De Dados..."
+
+    local d = 0; local dc
+    dc = RunService.Heartbeat:Connect(function()
+        d = (d + 1) % 4
+        if VerBtn and VerBtn.Parent then
+            VerBtn.Text = "Verificando" .. string.rep(".", d)
+        end
+    end)
+
+    task.spawn(function()
+        local result, info = CheckKeyFirebase(raw)
+        dc:Disconnect()
+
+        if result == "valid" then
+            VerBtn.Text = "✓  Key Válida!"
+            Tween(VerBtn,       {BackgroundColor3 = T.Success}, 0.2)
+            Tween(InputStroke,  {Color = T.Success}, 0.2)
+            StatusLbl.TextColor3 = T.Success
+            StatusLbl.Text = "⚡  Key válida!  •  " .. info .. " restantes"
+            Notify("⚡  Key Verificada!  🕐 " .. info .. " restantes", Color3.fromRGB(30, 140, 50), 3)
+            task.delay(1.6, function() LaunchMain(info) end)
+
+        elseif result == "expired" then
+            busy = false
+            VerBtn.Text = "Verificar Key"
+            Tween(VerBtn,       {BackgroundColor3 = T.Primary}, 0.2)
+            Tween(InputStroke,  {Color = T.Error}, 0.2)
+            StatusLbl.TextColor3 = T.Error
+            StatusLbl.Text = "✗  Key expirada! Obtenha uma nova."
+            Notify("✗  Key expirada! Clique em OBTER KEY para uma nova.", Color3.fromRGB(150, 30, 0), 3.5)
+            task.delay(1.3, function() Tween(InputStroke, {Color = T.PrimaryDark}, 0.4) end)
+
+        elseif result == "error" then
+            busy = false
+            VerBtn.Text = "Verificar Key"
+            Tween(VerBtn,       {BackgroundColor3 = T.Primary}, 0.2)
+            Tween(InputStroke,  {Color = T.Warning}, 0.2)
+            StatusLbl.TextColor3 = T.Warning
+            StatusLbl.Text = "⚠  Erro de conexão! Verifique o executor."
+            Notify("⚠  Erro ao conectar ao Banco De Dados. Tente novamente.", Color3.fromRGB(160, 110, 0), 3.5)
+            task.delay(1.3, function() Tween(InputStroke, {Color = T.PrimaryDark}, 0.4) end)
+
+        else -- invalid / empty
+            busy = false
+            VerBtn.Text = "Verificar Key"
+            Tween(VerBtn,       {BackgroundColor3 = T.Primary}, 0.2)
+            Tween(InputStroke,  {Color = T.Error}, 0.2)
+            StatusLbl.TextColor3 = T.Error
+            StatusLbl.Text = "✗  Key inválida! Verifique e tente novamente."
+            Notify("✗  Key inválida! Obtenha uma key válida.", Color3.fromRGB(150, 30, 0), 3)
+
+            -- Shake animation
+            local base = -W / 2
+            for i = 1, 6 do
+                task.wait(0.045)
+                local ox = (i % 2 == 0) and (base + 10) or (base - 10)
+                Tween(Main, {Position = UDim2.new(0.5, ox, 0.5, -H/2)}, 0.045, Enum.EasingStyle.Linear)
+            end
+            task.delay(0.32, function()
+                Tween(Main, {Position = UDim2.new(0.5, base, 0.5, -H/2)}, 0.1)
+                Tween(InputStroke, {Color = T.PrimaryDark}, 0.4)
+            end)
+        end
+    end)
+end
+
+VerBtn.MouseButton1Click:Connect(DoVerify)
+
+-- ─── GET KEY: copia o link ────────────────────────────────────────────
+GetBtn.MouseButton1Click:Connect(function()
+    pcall(function() setclipboard(CONFIG.GetKeyLink) end)
+
+    Tween(GetBtn, {BackgroundColor3 = Color3.fromRGB(55, 35, 6)}, 0.1)
+    task.delay(0.2, function() Tween(GetBtn, {BackgroundColor3 = T.BGInput}, 0.2) end)
+
+    if ScreenGui:FindFirstChild("_CopyPop") then ScreenGui._CopyPop:Destroy() end
+    local CP = Instance.new("Frame", ScreenGui)
+    CP.Name = "_CopyPop"; CP.Size = UDim2.new(0, 360, 0, 62)
+    CP.Position = UDim2.new(0.5, -180, 0, -78)
+    CP.BackgroundColor3 = T.PrimaryDark; CP.BackgroundTransparency = 0.06
+    CP.BorderSizePixel = 0; CP.ZIndex = 25
+    Instance.new("UICorner", CP).CornerRadius = UDim.new(0, 10)
+    local CPS = Instance.new("UIStroke", CP); CPS.Color = T.Primary; CPS.Thickness = 1.5; CPS.Transparency = 0.2
+
+    local CPI = Instance.new("TextLabel", CP)
+    CPI.Size = UDim2.new(1, -16, 0, 28); CPI.Position = UDim2.new(0, 8, 0, 4)
+    CPI.BackgroundTransparency = 1; CPI.Text = "✅  Link copiado! Acesse para obter sua key de 10h."
+    CPI.Font = Enum.Font.GothamBold; CPI.TextColor3 = Color3.new(1, 1, 1); CPI.TextSize = 13; CPI.ZIndex = 26
+
+    local CPL = Instance.new("TextLabel", CP)
+    CPL.Size = UDim2.new(1, -16, 0, 20); CPL.Position = UDim2.new(0, 8, 0, 36)
+    CPL.BackgroundTransparency = 1; CPL.Text = "🔗  " .. CONFIG.GetKeyLink
+    CPL.Font = Enum.Font.Gotham; CPL.TextColor3 = T.TextSub; CPL.TextSize = 11
+    CPL.TextXAlignment = Enum.TextXAlignment.Left; CPL.ZIndex = 26
+
+    Tween(CP, {Position = UDim2.new(0.5, -180, 0, 14)}, 0.4, Enum.EasingStyle.Back)
+    task.delay(4, function()
+        Tween(CP, {Position = UDim2.new(0.5, -180, 0, -78)}, 0.38)
+        task.delay(0.42, function() if CP and CP.Parent then CP:Destroy() end end)
+    end)
+end)
+
+-- ════════════════════════════════════════════════════════════════════
+--                    ANIMAÇÃO DE ENTRADA
+-- ════════════════════════════════════════════════════════════════════
+
+task.delay(0.05, function()
+    Tween(BG,   {ImageTransparency = 0},         0.75)
+    Tween(Film, {BackgroundTransparency = 0.52}, 0.75)
+    task.delay(0.22, function()
+        Tween(Main, {
+            Size     = UDim2.new(0, W, 0, H),
+            Position = UDim2.new(0.5, -W/2, 0.5, -H/2)
+        }, 0.62, Enum.EasingStyle.Back)
+    end)
+end)
+
+-- ════════════════════════════════════════════════════════════════════
+--                   PULSO NA BORDA (amarelo)
+-- ════════════════════════════════════════════════════════════════════
+
+task.spawn(function()
+    while Main and Main.Parent do
+        Tween(MainStroke, {Transparency = 0.78}, 1.6, Enum.EasingStyle.Sine)
+        task.wait(1.6)
+        Tween(MainStroke, {Transparency = 0},    1.6, Enum.EasingStyle.Sine)
+        task.wait(1.6)
+    end
+end)
+
+-- ════════════════════════════════════════════════════════════════════
+--                   SAUDAÇÃO INICIAL
+-- ════════════════════════════════════════════════════════════════════
+
+task.delay(0.9, function()
+    Notify("  Bem Vindo, " .. LocalPlayer.DisplayName .. "!  •  Banco De Dados ativo.", T.Primary, 4)
+end)
+
+-- ════════════════════════════════════════════════════════════════════
+--   COMO GERAR UMA KEY NO FIREBASE (para o admin)
+-- ════════════════════════════════════════════════════════════════════
+--[[
+    No Firebase Realtime Database, crie a key assim:
+
+    keys/
+      SUA-KEY-AQUI/
+        expireAt: 1700000000   <- os.time() + (10 * 3600)
+
+    Exemplo via REST (PATCH):
+    PATCH https://filmes-strimz-default-rtdb.firebaseio.com/keys/MINHA-KEY.json
+    Body: { "expireAt": 1700036000 }
+
+    O campo expireAt é Unix timestamp em SEGUNDOS.
+    Keys de 10 horas = os.time() atual + 36000
+]]
